@@ -32,12 +32,34 @@ Profiles match official llm-d guides: https://github.com/llm-d/llm-d/tree/main/g
 ## What Gets Tested
 
 1. **Cluster Connectivity** - kubectl/oc access
+1b. **Operator Prerequisites** - cert-manager, LWS operator
 2. **Namespace Validation** - Namespace exists, pods healthy
 3. **Helm Releases** - Deployed Helm charts
 4. **Profile Components** - Profile-specific pods, deployments, CRDs
 5. **Inference Readiness** - Port-forward, /v1/models, inference test
 6. **Monitoring Stack** - Prometheus, Grafana, ServiceMonitors, PodMonitors
 7. **Recent Events** - Warning/Error events
+
+## Operator Prerequisites
+
+The script checks for required operators:
+
+### cert-manager
+- **Namespace**: `cert-manager-operator` (operator), `cert-manager` (operand)
+- **Not present** → WARN (may not be needed for all deployments)
+- **Present but pods failing** → FAIL
+
+### Istio (sail-operator)
+- **Namespace**: `istio-system`
+- **Not present** → WARN
+- **Present but pods failing** → FAIL
+- **Checks for**: istiod control plane
+
+### LWS (LeaderWorkerSet) Operator
+- **Namespace**: `openshift-lws-operator`
+- **Not present** → WARN (unless `wide-ep-lws` profile)
+- **Not present + wide-ep-lws profile** → FAIL (required)
+- **Present but pods failing** → FAIL
 
 ## Monitoring Validation
 

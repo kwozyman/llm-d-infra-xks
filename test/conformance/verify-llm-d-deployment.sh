@@ -946,6 +946,135 @@ check_cluster_connectivity() {
     fi
 }
 
+# Check cert-manager operator
+# - Not present → WARN
+# - Present but pods failing → FAIL
+check_cert_manager() {
+    log_info "Checking cert-manager operator..."
+
+    local operator_ns="cert-manager-operator"
+    local operand_ns="cert-manager"
+
+    # Check if operator namespace exists
+    if ! $KUBECTL get namespace "$operator_ns" &> /dev/null; then
+        log_warn "cert-manager operator not installed (namespace $operator_ns not found)"
+        return 0
+    fi
+
+    # Operator namespace exists - check pods
+    local total running failed
+    total=$($KUBECTL get pods -n "$operator_ns" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+    running=$($KUBECTL get pods -n "$operator_ns" --no-headers 2>/dev/null | grep -c "Running" | tr -d '[:space:]' || echo "0")
+    failed=$($KUBECTL get pods -n "$operator_ns" --no-headers 2>/dev/null | grep -cE "Error|CrashLoop|Failed" | tr -d '[:space:]' || echo "0")
+
+    if [[ "${failed:-0}" -gt 0 ]]; then
+        log_fail "cert-manager operator: $failed pod(s) failing in $operator_ns"
+        return 1
+    elif [[ "${running:-0}" -gt 0 ]]; then
+        log_pass "cert-manager operator: $running pod(s) running"
+    else
+        log_warn "cert-manager operator: no running pods in $operator_ns"
+    fi
+
+    # Check operand namespace (cert-manager itself)
+    if $KUBECTL get namespace "$operand_ns" &> /dev/null; then
+        local cm_running cm_failed
+        cm_running=$($KUBECTL get pods -n "$operand_ns" --no-headers 2>/dev/null | grep -c "Running" | tr -d '[:space:]' || echo "0")
+        cm_failed=$($KUBECTL get pods -n "$operand_ns" --no-headers 2>/dev/null | grep -cE "Error|CrashLoop|Failed" | tr -d '[:space:]' || echo "0")
+
+        if [[ "${cm_failed:-0}" -gt 0 ]]; then
+            log_fail "cert-manager: $cm_failed pod(s) failing in $operand_ns"
+            return 1
+        elif [[ "${cm_running:-0}" -gt 0 ]]; then
+            log_pass "cert-manager: $cm_running pod(s) running"
+        fi
+    fi
+}
+
+# Check Istio (sail-operator)
+# - Not present → WARN
+# - Present but pods failing → FAIL
+check_istio() {
+    log_info "Checking Istio..."
+
+    local istio_ns="istio-system"
+
+    # Check if namespace exists
+    if ! $KUBECTL get namespace "$istio_ns" &> /dev/null; then
+        log_warn "Istio not installed (namespace $istio_ns not found)"
+        return 0
+    fi
+
+    # Namespace exists - check pods
+    local total running failed
+    total=$($KUBECTL get pods -n "$istio_ns" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+    running=$($KUBECTL get pods -n "$istio_ns" --no-headers 2>/dev/null | grep -c "Running" | tr -d '[:space:]' || echo "0")
+    failed=$($KUBECTL get pods -n "$istio_ns" --no-headers 2>/dev/null | grep -cE "Error|CrashLoop|Failed" | tr -d '[:space:]' || echo "0")
+
+    if [[ "${failed:-0}" -gt 0 ]]; then
+        log_fail "Istio: $failed pod(s) failing in $istio_ns"
+        return 1
+    elif [[ "${running:-0}" -gt 0 ]]; then
+        log_pass "Istio: $running pod(s) running in $istio_ns"
+    else
+        log_warn "Istio: no running pods in $istio_ns"
+    fi
+
+    # Check for istiod specifically
+    local istiod
+    istiod=$($KUBECTL get pods -n "$istio_ns" --no-headers 2>/dev/null | grep -c "istiod" | tr -d '[:space:]' || echo "0")
+    if [[ "${istiod:-0}" -gt 0 ]]; then
+        log_pass "istiod control plane running"
+    else
+        log_warn "istiod not found"
+    fi
+}
+
+# Check LWS (LeaderWorkerSet) operator
+# - Not present → WARN (unless wide-ep-lws profile, then FAIL)
+# - Present but pods failing → FAIL
+check_lws_operator() {
+    log_info "Checking LWS operator..."
+
+    local operator_ns="openshift-lws-operator"
+
+    # Check if operator namespace exists
+    if ! $KUBECTL get namespace "$operator_ns" &> /dev/null; then
+        if [[ "$SELECTED_PROFILE" == "wide-ep-lws" ]]; then
+            log_fail "LWS operator required for wide-ep-lws profile (namespace $operator_ns not found)"
+            return 1
+        else
+            log_warn "LWS operator not installed (namespace $operator_ns not found)"
+            return 0
+        fi
+    fi
+
+    # Operator namespace exists - check pods
+    local total running failed
+    total=$($KUBECTL get pods -n "$operator_ns" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+    running=$($KUBECTL get pods -n "$operator_ns" --no-headers 2>/dev/null | grep -c "Running" | tr -d '[:space:]' || echo "0")
+    failed=$($KUBECTL get pods -n "$operator_ns" --no-headers 2>/dev/null | grep -cE "Error|CrashLoop|Failed" | tr -d '[:space:]' || echo "0")
+
+    if [[ "${failed:-0}" -gt 0 ]]; then
+        log_fail "LWS operator: $failed pod(s) failing in $operator_ns"
+        return 1
+    elif [[ "${running:-0}" -gt 0 ]]; then
+        log_pass "LWS operator: $running pod(s) running"
+    else
+        log_warn "LWS operator: no running pods in $operator_ns"
+    fi
+
+    # Check LWS CRD
+    if $KUBECTL get crd leaderworkersets.leaderworkerset.x-k8s.io &> /dev/null; then
+        log_pass "LeaderWorkerSet CRD installed"
+    else
+        if [[ "$SELECTED_PROFILE" == "wide-ep-lws" ]]; then
+            log_fail "LeaderWorkerSet CRD not found (required for wide-ep-lws)"
+            return 1
+        fi
+    fi
+}
+
 check_namespace() {
     log_section "2. Namespace Validation"
 
@@ -1155,6 +1284,11 @@ main() {
 
     check_cluster_connectivity || true
     [[ -z "$KUBECTL" ]] && { print_summary; exit 1; }
+
+    log_section "1b. Operator Prerequisites"
+    check_cert_manager || true
+    check_istio || true
+    check_lws_operator || true
 
     check_namespace || true
     check_helm_releases || true
