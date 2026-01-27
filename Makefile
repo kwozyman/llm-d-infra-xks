@@ -1,6 +1,7 @@
 .PHONY: deploy deploy-all undeploy status test help check-kubeconfig sync
 .PHONY: deploy-cert-manager deploy-istio deploy-lws
 .PHONY: undeploy-cert-manager undeploy-istio undeploy-lws
+.PHONY: conformance conformance-basic conformance-full
 
 check-kubeconfig:
 	@kubectl cluster-info >/dev/null 2>&1 || (echo "ERROR: Cannot connect to cluster. Check KUBECONFIG." && exit 1)
@@ -27,6 +28,11 @@ help:
 	@echo "  make status              - Show deployment status"
 	@echo "  make test                - Run tests"
 	@echo "  make sync                - Fetch latest from git repos"
+	@echo ""
+	@echo "Conformance Tests:"
+	@echo "  make conformance NAMESPACE=llm-d                    - Run conformance (auto-detect profile)"
+	@echo "  make conformance NAMESPACE=llm-d PROFILE=full       - Run with specific profile"
+	@echo "  make conformance-list                               - List available profiles"
 
 # Sync (fetch latest from git repos)
 sync:
@@ -99,3 +105,25 @@ test: check-kubeconfig
 	@cd ../sail-operator-chart && make test 2>/dev/null || echo "[istio] SKIP"
 	@cd ../lws-operator-chart && make test 2>/dev/null || echo "[lws] SKIP"
 	@echo "=== Done ==="
+
+# Conformance Tests
+NAMESPACE ?= llm-d
+PROFILE ?= basic
+TIMEOUT ?= 120
+
+conformance: check-kubeconfig
+	@echo "=== Running LLM-D Conformance Tests ==="
+	@./test/conformance/verify-llm-d-deployment.sh \
+		--namespace $(NAMESPACE) \
+		--profile $(PROFILE) \
+		--timeout $(TIMEOUT)
+
+conformance-list:
+	@./test/conformance/verify-llm-d-deployment.sh --list-profiles
+
+conformance-quick: check-kubeconfig
+	@echo "=== Running Quick Conformance (skip inference) ==="
+	@./test/conformance/verify-llm-d-deployment.sh \
+		--namespace $(NAMESPACE) \
+		--profile $(PROFILE) \
+		--skip-inference
