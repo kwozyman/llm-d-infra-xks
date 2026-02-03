@@ -194,23 +194,6 @@ The odh-xks overlay disables several OpenShift-specific features for vanilla Kub
 | `LLMISVC_AUTH_DISABLED` | Authorino/Kuadrant (Red Hat Connectivity Link) is OpenShift-only |
 | `LLMISVC_SCC_DISABLED` | SecurityContextConstraints are OpenShift-specific |
 
-### Authentication on AKS/xKS
-
-On OpenShift, LLMInferenceService uses **Authorino** (via Red Hat Connectivity Link) for API authentication:
-- Requires valid JWT token to access inference endpoints
-- Uses Kubernetes RBAC to check if ServiceAccount can "get" the LLMInferenceService
-- Requests without valid token get `401 Unauthorized`
-
-**On AKS/EKS/GKE (xKS):**
-- Authorino/Kuadrant is **not available** (OpenShift-only operator)
-- Authentication is **disabled by default** (`LLMISVC_AUTH_DISABLED=true`)
-- Inference endpoints are accessible without authentication
-
-**If you need authentication on xKS**, you have options:
-1. Use Istio AuthorizationPolicy for JWT validation
-2. Use an API Gateway with auth (e.g., Kong, Ambassador)
-3. Implement auth at the application level
-
 ### Enabling Monitoring (KServe)
 
 To enable Prometheus monitoring for KServe-managed workloads:
@@ -320,6 +303,9 @@ The `odh-xks` overlay configures KServe for vanilla Kubernetes (AKS, EKS, GKE).
 | Webhooks | Validation webhooks for LLMInferenceService |
 | TLS | Certificate, ClusterIssuer for mTLS between components |
 
+**Prerequisites:**
+- `kustomize` version **5.7+** (required for odh-xks overlay)
+
 **Deploy:**
 
 ```bash
@@ -328,7 +314,14 @@ git clone https://github.com/opendatahub-io/kserve.git
 cd kserve
 git checkout release-v0.15
 
-# Deploy KServe with odh-xks overlay
+# Step 1: Create opendatahub namespace
+kubectl create namespace opendatahub --dry-run=client -o yaml | kubectl apply -f -
+
+# Step 2: Apply cert-manager PKI resources first (required for webhook certificates)
+kubectl apply -k config/overlays/odh-test/cert-manager
+kubectl wait --for=condition=Ready clusterissuer/opendatahub-ca-issuer --timeout=120s
+
+# Step 3: Deploy KServe with odh-xks overlay
 kustomize build config/overlays/odh-xks | kubectl apply --server-side -f -
 
 # Wait for controller to be ready
