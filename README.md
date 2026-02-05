@@ -105,11 +105,18 @@ make status
 # Create opendatahub namespace
 kubectl create namespace opendatahub --dry-run=client -o yaml | kubectl apply -f -
 
+# Copy pull secret from istio-system (created by infrastructure deployment)
+kubectl get secret redhat-pull-secret -n istio-system -o yaml | \
+  sed 's/namespace: istio-system/namespace: opendatahub/' | \
+  kubectl apply -f -
+
 # Apply cert-manager PKI resources first (required for webhook certificates)
 kubectl apply -k "https://github.com/opendatahub-io/kserve/config/overlays/odh-test/cert-manager?ref=release-v0.15"
 kubectl wait --for=condition=Ready clusterissuer/opendatahub-ca-issuer --timeout=120s
 
-# Deploy KServe with odh-xks overlay
+# Deploy KServe with odh-xks overlay (run twice - first applies CRDs, second applies CRs)
+kustomize build "https://github.com/opendatahub-io/kserve/config/overlays/odh-xks?ref=release-v0.15" | kubectl apply --server-side --force-conflicts -f -
+sleep 5
 kustomize build "https://github.com/opendatahub-io/kserve/config/overlays/odh-xks?ref=release-v0.15" | kubectl apply --server-side --force-conflicts -f -
 
 # Wait for controller to be ready
@@ -166,6 +173,15 @@ az aks nodepool add \
 # Create namespace first
 export NAMESPACE=llm-d-test
 kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+
+# Copy pull secret from istio-system (created by infrastructure deployment)
+kubectl get secret redhat-pull-secret -n istio-system -o yaml | \
+  sed "s/namespace: istio-system/namespace: $NAMESPACE/" | \
+  kubectl apply -f -
+
+# Patch default ServiceAccount to use pull secret (all pods will inherit it)
+kubectl patch serviceaccount default -n $NAMESPACE \
+  -p '{"imagePullSecrets": [{"name": "redhat-pull-secret"}]}'
 
 # Deploy Qwen2.5-7B model with scheduler
 kubectl apply -n $NAMESPACE -f - <<'EOF'
@@ -318,14 +334,25 @@ kubectl get gateway -n opendatahub
 kubectl get pods -n opendatahub -l gateway.networking.k8s.io/gateway-name=inference-gateway
 ```
 
-### Set up Namespace
+### Set up Namespace with Pull Secret
+
+**Important:** vLLM images are from `registry.redhat.io` which requires a Red Hat pull secret.
 
 ```bash
-export NAMESPACE=llm-test
+export NAMESPACE=llm-d-test
 kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+
+# Copy pull secret from istio-system (created by infrastructure deployment)
+kubectl get secret redhat-pull-secret -n istio-system -o yaml | \
+  sed "s/namespace: istio-system/namespace: $NAMESPACE/" | \
+  kubectl apply -f -
+
+# Patch default ServiceAccount to use pull secret (all pods will inherit it)
+kubectl patch serviceaccount default -n $NAMESPACE \
+  -p '{"imagePullSecrets": [{"name": "redhat-pull-secret"}]}'
 ```
 
-> **Note:** KServe automatically handles pull secrets and HuggingFace tokens through LLMInferenceServiceConfig.
+> **Note:** For gated HuggingFace models, you may also need to create a secret with your HF token.
 
 ### Sample: Deploy Qwen2.5-7B with Scheduler
 
@@ -427,6 +454,13 @@ kustomize build "https://github.com/opendatahub-io/kserve/config/overlays/odh-xk
 If webhook validation blocks apply:
 ```bash
 kubectl delete validatingwebhookconfiguration llminferenceservice.serving.kserve.io llminferenceserviceconfig.serving.kserve.io
+kustomize build "https://github.com/opendatahub-io/kserve/config/overlays/odh-xks?ref=release-v0.15" | kubectl apply --server-side --force-conflicts -f -
+```
+
+If you get "no matches for kind LLMInferenceServiceConfig" errors:
+```bash
+# This is a CRD timing issue - run the apply command again after CRDs are registered
+sleep 5
 kustomize build "https://github.com/opendatahub-io/kserve/config/overlays/odh-xks?ref=release-v0.15" | kubectl apply --server-side --force-conflicts -f -
 ```
 
