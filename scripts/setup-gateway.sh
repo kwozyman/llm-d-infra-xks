@@ -30,6 +30,8 @@ KSERVE_NAMESPACE="${KSERVE_NAMESPACE:-opendatahub}"
 CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-cert-manager}"
 CA_SECRET_NAME="${CA_SECRET_NAME:-opendatahub-ca}"
 GATEWAY_NAME="${GATEWAY_NAME:-inference-gateway}"
+ISTIO_SERVICEACCOUNT="${ISTIO_SERVICEACCOUNT:-inference-gateway-istio}"
+REDHAT_PULL_SECRET=${REDHAT_PULL_SECRET:-redhat-pull-secret}
 CA_BUNDLE_CONFIGMAP="${CA_BUNDLE_CONFIGMAP:-odh-ca-bundle}"
 CA_MOUNT_PATH="${CA_MOUNT_PATH:-/var/run/secrets/opendatahub}"
 
@@ -170,6 +172,11 @@ EOF
   fi
 }
 
+pull_secret_setup() {
+    log_info "Using ${REDHAT_PULL_SECRET} secret for serviceaccount ${ISTIO_SERVICEACCOUNT}"
+    kubectl patch serviceaccount "${ISTIO_SERVICEACCOUNT}" -p '{"imagePullSecrets": [{"name": "'"$REDHAT_PULL_SECRET"'"}]}' -n "${KSERVE_NAMESPACE}" || log_error "Could not patch serviceaccount"
+}
+
 # -----------------------------------------------------------------------------
 # verify_setup
 # Verify the Gateway setup is complete
@@ -213,6 +220,7 @@ main() {
   setup_ca_bundle
   create_gateway_config
   create_gateway
+  pull_secret_setup
   verify_setup
 }
 
