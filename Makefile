@@ -41,7 +41,8 @@ help:
 # Clear helmfile git cache to force fresh pulls
 clear-cache:
 	@echo "=== Clearing helmfile cache ==="
-	@rm -rf $(HELMFILE_CACHE)/git 2>/dev/null || true
+	helmfile cache info
+	helmfile cache cleanup
 	@echo "Cache cleared"
 
 # Sync (fetch latest from git repos)
