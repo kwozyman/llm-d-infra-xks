@@ -757,10 +757,28 @@ EOF
     esac
 done
 
-# Set default profile based on mode
+# Auto-detect profile based on what's deployed
+auto_detect_profile() {
+    local ns="$1"
+
+    # Check for scheduler/EPP pods (kserve-gpu)
+    if kubectl get pods -n "$ns" --no-headers 2>/dev/null | grep -qE "router-scheduler|inference-scheduler|epp"; then
+        # Check for prefill/decode separation (kserve-pd)
+        if kubectl get pods -n "$ns" --no-headers 2>/dev/null | grep -qE "prefill|decode"; then
+            echo "kserve-pd"
+        else
+            echo "kserve-gpu"
+        fi
+    else
+        echo "kserve-basic"
+    fi
+}
+
+# Set default profile based on mode (auto-detect for kserve)
 if [[ -z "$SELECTED_PROFILE" ]]; then
     if [[ "$DEPLOYMENT_MODE" == "kserve" ]]; then
-        SELECTED_PROFILE="kserve-basic"
+        SELECTED_PROFILE=$(auto_detect_profile "$LLMD_NAMESPACE")
+        echo "[INFO] Auto-detected profile: $SELECTED_PROFILE"
     else
         SELECTED_PROFILE="inference-scheduling"
     fi
